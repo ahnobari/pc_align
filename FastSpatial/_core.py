@@ -101,19 +101,32 @@ def align_clouds(source: Union[cp.ndarray, np.ndarray], target: Union[cp.ndarray
     best_alignment = None
     best_error = np.inf
     
-    target_tree = KDTree(target_normalized)
+    if isinstance(target_normalized, np.ndarray):
+        target_tree = KDTree(target_normalized)
+        Rs = np.zeros((4,3,3))
+    else:
+        Rs = cp.zeros((4,3,3))
+        
+    Rs[0] = principal_axes_target.T @ principal_axes_source
+
+    for i in range(3):
+        # all possible 2 out of 3 permutations
+        if isinstance(target_normalized, np.ndarray):
+            alignment = 1 - 2 * np.array([i>0, (i+1)%2, i%3<=1])
+        else:
+            alignment = 1 - 2 * cp.array([i>0, (i+1)%2, i%3<=1])
+        Rs[i+1] = principal_axes_target.T @ (principal_axes_source * alignment[:,None])
     
-    for i in range(8):
-        alignment = np.array([i & 1, (i >> 1) & 1, (i >> 2) & 1])*2 - 1
-        flipped_axes = principal_axes_source * alignment[:,None]
-        
-        R = principal_axes_target.T @ flipped_axes
-        
+    for i in range(4):
+        R = Rs[i]
         aligned_source = source_normalized @ R.T
         
-        source_tree = KDTree(aligned_source)
-        
-        cd = source_tree.query(target_normalized)[0].mean() + target_tree.query(aligned_source)[0].mean()
+        if isinstance(target_normalized, np.ndarray):
+            source_tree = KDTree(aligned_source)
+            cd = source_tree.query(target_normalized)[0].mean() + target_tree.query(aligned_source)[0].mean()
+        else:
+            cd = cp_cdist(aligned_source, target_normalized)
+            cd = cd.min(axis=0).mean() + cd.min(axis=1).mean()
         
         if cd < best_error:
             best_error = cd
