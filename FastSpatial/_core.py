@@ -1,8 +1,10 @@
 import numpy as np
 import cupy as cp
-from typing import Tuple, List, Union
+from typing import Tuple, List, Union, Optional
 from scipy.spatial.distance import cdist
 from scipy.spatial import KDTree
+from cupyx.scipy.spatial.distance import cdist as cp_cdist
+from ._aligned_grid import generate_full_rotation_grid
 
 def procrustes(point_clouds: Union[cp.ndarray, np.ndarray]) -> Tuple[Union[cp.ndarray, cp.ndarray], Union[cp.ndarray, cp.ndarray], Union[cp.ndarray, cp.ndarray]]:
     '''
@@ -124,4 +126,117 @@ def align_clouds(source: Union[cp.ndarray, np.ndarray], target: Union[cp.ndarray
         aligned_source = aligned_source * scales_t + centers_t
         
     return aligned_source, best_error
+
+def batch_chamfer_distance(source: Union[cp.ndarray, np.ndarray], target: Union[cp.ndarray, np.ndarray]) -> Union[cp.ndarray, cp.ndarray]:
+    '''
+    Compute the Chamfer distance between two sets of point clouds.
+    
+    Parameters:
+        source: Union[cp.ndarray, np.ndarray]
+            Source point clouds.
+        target: Union[cp.ndarray, cp.ndarray]
+            Target point clouds.
+    
+    Returns:
+        chamfer_distance: Union[cp.ndarray, cp.ndarray]
+            Chamfer distance between the source and target point clouds.
+    '''
+    
+    p_delta = source[:,None] - target[:,:,None]
+    if isinstance(source, np.ndarray):
+        cdist = np.linalg.norm(p_delta, axis=-1)
+    else:
+        cdist = cp.linalg.norm(p_delta, axis=-1)
+    
+    return cdist.min(axis=1).mean(axis=1) + cdist.min(axis=2).mean(axis=1)
+
+def exhaustive_euclidean_alignment(source: Union[cp.ndarray, np.ndarray], target: Union[cp.ndarray, np.ndarray], num_angles: int = 200, normalize: bool = False, down_sample_size : int = None, Rs : Optional[Union[cp.ndarray, np.ndarray]] =None, batch_size=200) -> Union[cp.ndarray, cp.ndarray]:
+    '''
+    Align source point clouds to target point clouds using exhaustive search.
+    
+    Parameters:
+        source: Union[cp.ndarray, np.ndarray]
+            Source point cloud.
+        target: Union[cp.ndarray, np.ndarray]
+            Target point cloud.
+        num_angles: int
+            Number of angles to search for the alignment.
+        normalize: bool
+            Normalize the point clouds before computing the principal axes.
+        down_sample_size: int
+            Down sample the point clouds before alignment.
+        Rs: Optional[Union[cp.ndarray, np.ndarray]]
+            Precomputed rotation matrices.
+    
+    Returns:
+        aligned_source: Union[cp.ndarray, cp.ndarray]
+            Aligned source point cloud.
+        normalized_chamfer_distance: float
+            Normalized Chamfer distance between the source and target point clouds after alignment.
+    '''
+    
+    if normalize:
+        source_normalized, centers, scales = procrustes(source[None])
+        target_normalized, centers_t, scales_t = procrustes(target[None])
+        source_normalized = source_normalized[0]
+        target_normalized = target_normalized[0]
+        centers_t = centers_t[0]
+        scales_t = scales_t[0]
+    else:
+        source_normalized = source
+        target_normalized = target
         
+    if down_sample_size is not None:
+        source_normalized_og = source_normalized
+        target_normalized_og = target_normalized
+        source_normalized = source_normalized[np.random.choice(source_normalized.shape[0], down_sample_size)]
+        target_normalized = target_normalized[np.random.choice(target_normalized.shape[0], down_sample_size)]
+    
+    if Rs is None:
+        Rs = generate_full_rotation_grid(num_angles)
+        if isinstance(source, cp.ndarray):
+            Rs = cp.array(Rs)
+    
+    if isinstance(source, np.ndarray):
+        tree = KDTree(target_normalized)
+
+    tiled_source = source_normalized[None].repeat(Rs.shape[0], axis=0)
+    # tiled_target = target_normalized[None].repeat(Rs.shape[0], axis=0)
+    
+    
+    if isinstance(source, np.ndarray):
+        transformed_source = np.einsum('ijk,ikl->ijl', tiled_source, Rs)
+    else:
+        transformed_source = cp.einsum('ijk,ikl->ijl', tiled_source, Rs)
+    
+    if isinstance(source, np.ndarray):
+        dists = tree.query(transformed_source.reshape(-1, 3))[0]
+        dists = dists.reshape(transformed_source.shape[0], transformed_source.shape[1])
+        cds = dists.mean(axis=1)
+    else:
+        cds = cp.zeros(transformed_source.shape[0])
+        n_batches = (transformed_source.shape[0] + batch_size - 1) // batch_size
+        for i in range(n_batches):
+            start = i*batch_size
+            end = min((i+1)*batch_size, transformed_source.shape[0])
+            dist = cp_cdist(transformed_source[start:end].reshape(-1,3), target_normalized)
+            dist = dist.reshape(end-start, -1, target_normalized.shape[0])
+            cds[start:end] = dist.min(axis=1).mean(axis=1) + dist.min(axis=2).mean(axis=1)
+        
+        
+        
+    best_idx = cds.argmin()
+    best_error = cds[best_idx]
+    out = source_normalized_og @ Rs[best_idx].T
+    
+    cd = out[None] - target_normalized_og[:,None]
+    if isinstance(source, np.ndarray):
+        cd = np.linalg.norm(cd, axis=-1)
+    else:
+        cd = cp.linalg.norm(cd, axis=-1)
+    cd = float(cd.min(axis=0).mean() + cd.min(axis=1).mean())
+    
+    if normalize:
+        out = out * scales_t + centers_t
+        
+    return out, cd

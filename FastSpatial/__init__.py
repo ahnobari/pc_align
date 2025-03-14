@@ -1,1 +1,1 @@
-from ._core import procrustes, principal_axes, align_clouds
+from ._core import procrustes, principal_axes, align_clouds, exhaustive_euclidean_alignment, generate_full_rotation_grid
