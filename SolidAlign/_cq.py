@@ -30,7 +30,7 @@ def align_shapes(source : cq.Workplane, target : cq.Workplane) -> Tuple[cq.Workp
         alignment = 1 - 2 * np.array([i>0, (i+1)%2, i%3<=1])
         Rs[i+1] = I_v_target @ (alignment[None,:] * I_v_source).T
 
-    best_IOU = np.inf
+    best_IOU = 0
     best_T = None
     for i in range(4):
         T = np.zeros([4,4])
@@ -44,7 +44,7 @@ def align_shapes(source : cq.Workplane, target : cq.Workplane) -> Tuple[cq.Workp
         
         IOU = intersect.Volume() / union.Volume()
         
-        if IOU < best_IOU:
+        if IOU > best_IOU:
             best_IOU = IOU
             best_T = T
 

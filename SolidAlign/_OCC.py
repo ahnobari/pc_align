@@ -74,7 +74,7 @@ def align_shapes(source : TopoDS_Shape, target : TopoDS_Shape) -> Tuple[TopoDS_S
         Rs[i+1] = v1 @ (alignment[None,:] * v2).T
     
     
-    best_IOU = np.inf
+    best_IOU = 0
     best_T = None
     for i in range(4):
         R = Rs[i]
@@ -93,7 +93,7 @@ def align_shapes(source : TopoDS_Shape, target : TopoDS_Shape) -> Tuple[TopoDS_S
 
         IOU = V_I/V_U
         
-        if IOU < best_IOU:
+        if IOU > best_IOU:
             best_IOU = IOU
             best_T = R
         
