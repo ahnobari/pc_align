@@ -52,10 +52,9 @@ def align_shapes(source : TopoDS_Shape, target : TopoDS_Shape) -> Tuple[TopoDS_S
     translation = gp_Trsf()
     translation.SetTranslation(translation_vector)
     shape_1 = BRepBuilderAPI_Transform(target, translation, True).Shape()
-
     scaling = gp_Trsf()
     scaling.SetScale(gp_Pnt(0,0,0), 1/s1)
-    shape_1 = BRepBuilderAPI_Transform(source, scaling, True).Shape()
+    shape_1 = BRepBuilderAPI_Transform(shape_1, scaling, True).Shape()
 
     translation_vector = gp_Vec(-c2[0], -c2[1], -c2[2])
     translation = gp_Trsf()
